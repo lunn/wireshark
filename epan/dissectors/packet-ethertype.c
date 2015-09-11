@@ -145,6 +145,7 @@ const value_string etype_vals[] = {
 	{ ETHERTYPE_VMLAB,                "VMware Lab Manager" },
 	{ ETHERTYPE_COBRANET,             "Cirrus Cobranet Packet" },
 	{ ETHERTYPE_NSRP,                 "Juniper Netscreen Redundant Protocol" },
+	{ ETHERTYPE_EDSA,                 "EtherType Distributed Switch Architecture" },
 	/*
 	 * NDISWAN on Windows translates Ethernet frames from higher-level
 	 * protocols into PPP frames to hand to the PPP driver, and translates

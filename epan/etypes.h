@@ -562,6 +562,10 @@ extern "C" {
 #define ETHERTYPE_TDMOE			0xD00D	/* Digium TDMoE packets (not officially registered) */
 #endif
 
+#ifndef ETHERTYPE_EDSA
+#define ETHERTYPE_EDSA			0xDADA	/* Distributed Switch Architecture (not officially registered) */
+#endif
+
 #ifndef ETHERTYPE_FCFT
 #define ETHERTYPE_FCFT			0xFCFC	/* used to transport FC frames+MDS hdr internal to Cisco's MDS switch */
 #endif
