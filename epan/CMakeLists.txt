@@ -643,6 +643,7 @@ set(DISSECTOR_SRC
 	dissectors/packet-echo.c
 	dissectors/packet-ecp-oui.c
 	dissectors/packet-edonkey.c
+	dissectors/packet-edsa.c
 	dissectors/packet-egd.c
 	dissectors/packet-ehdlc.c
 	dissectors/packet-ehs.c
