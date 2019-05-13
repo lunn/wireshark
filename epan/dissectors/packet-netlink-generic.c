@@ -40,6 +40,11 @@ typedef struct {
 	const guint8   *family_name;
 } genl_ctrl_info_t;
 
+typedef struct {
+	struct packet_netlink_data *data;
+	int             encoding; /* copy of data->encoding */
+} genl_ethtool_info_t;
+
 /* from include/uapi/linux/genetlink.h */
 enum {
 	WS_CTRL_CMD_UNSPEC,
@@ -123,6 +128,8 @@ static int proto_netlink_generic;
 
 static dissector_handle_t netlink_generic;
 static dissector_handle_t netlink_generic_ctrl;
+static dissector_handle_t netlink_generic_ethtool;
+
 static dissector_table_t genl_dissector_table;
 
 static header_field_info *hfi_netlink_generic = NULL;
@@ -137,6 +144,13 @@ static gint ett_genl_ctrl_op_flags = -1;
 static gint ett_genl_ctrl_groups = -1;
 static gint ett_genl_ctrl_groups_attr = -1;
 static gint ett_genl_nested_attr = -1;
+static gint ett_genl_ethtool_act_cable_test = -1;
+static gint ett_genl_ethtool_cmd_event = -1;
+static gint ett_genl_ethtool_cmd_event_dev_attr = -1;
+static gint ett_genl_ethtool_cmd_event_cable_test = -1;
+static gint ett_genl_ethtool_cable_test_result = -1;
+static gint ett_genl_ethtool_cable_test_fault_length = -1;
+static gint ett_genl_ethtool_dev_attr = -1;
 
 /*
  * Maps family IDs (integers) to family names (strings) within a capture file.
@@ -380,6 +394,526 @@ dissect_genl_ctrl(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree _U_, v
 	return tvb_captured_length(tvb);
 }
 
+/* from include/uapi/linux/ethtool_netlink.h */
+enum sw_ethtool_cmd_events {
+	WS_ETHNL_CMD_NOP,
+	WS_ETHNL_CMD_EVENT,		/* only for notifications */
+	WS_ETHNL_CMD_GET_STRSET,
+	WS_ETHNL_CMD_SET_STRSET,	/* only for reply */
+	WS_ETHNL_CMD_GET_INFO,
+	WS_ETHNL_CMD_SET_INFO,		/* only for reply */
+	WS_ETHNL_CMD_GET_SETTINGS,
+	WS_ETHNL_CMD_SET_SETTINGS,
+	WS_ETHNL_CMD_GET_PARAMS,
+	WS_ETHNL_CMD_SET_PARAMS,
+	WS_ETHNL_CMD_ACT_NWAY_RST,
+	WS_ETHNL_CMD_ACT_PHYS_ID,
+	WS_ETHNL_CMD_ACT_RESET,
+	WS_ETHNL_CMD_GET_RXFLOW,
+	WS_ETHNL_CMD_SET_RXFLOW,
+	WS_ETHNL_CMD_ACT_CABLE_TEST,
+};
+
+enum ws_ethtool_dev_attrs {
+        WS_ETHTOOL_A_DEV_UNSPEC,
+        WS_ETHTOOL_A_DEV_INDEX,
+        WS_ETHTOOL_A_DEV_NAME,
+};
+
+enum ws_ethtool_cmd_events {
+	WS_ETHTOOL_A_EVENT_UNSPEC,
+	WS_ETHTOOL_A_EVENT_NEWDEV,
+	WS_ETHTOOL_A_EVENT_DELDEV,
+	WS_ETHTOOL_A_EVENT_RENAMEDEV,
+	WS_ETHTOOL_A_EVENT_CABLE_TEST,
+};
+
+enum ws_ethtool_cable_test_pair {
+	WS_ETHTOOL_A_CABLE_PAIR_0,
+	WS_ETHTOOL_A_CABLE_PAIR_1,
+	WS_ETHTOOL_A_CABLE_PAIR_2,
+	WS_ETHTOOL_A_CABLE_PAIR_3,
+};
+
+enum ws_ethtool_cable_test_code {
+	WS_ETHTOOL_A_CABLE_RESULT_CODE_UNSPEC,
+	WS_ETHTOOL_A_CABLE_RESULT_CODE_OK,
+	WS_ETHTOOL_A_CABLE_RESULT_CODE_OPEN,
+	WS_ETHTOOL_A_CABLE_RESULT_CODE_SAME_SHORT,
+	WS_ETHTOOL_A_CABLE_RESULT_CODE_CROSS_SHORT,
+};
+
+enum ws_ethtool_cable_test_fault_length {
+	WS_ETHTOOL_A_CABLE_FAULT_LENGTH_UNSPEC,
+	WS_ETHTOOL_A_CABLE_FAULT_LENGTH_PAIR,
+	WS_ETHTOOL_A_CABLE_FAULT_LENGTH_CM,
+};
+
+enum ws_ethtool_cable_test_result {
+	WS_ETHTOOL_A_CABLE_RESULT_UNSPEC,
+	WS_ETHTOOL_A_CABLE_RESULT_PAIR,
+	WS_ETHTOOL_A_CABLE_RESULT_CODE,
+};
+
+enum ws_ethtool_cmd_events_cable_test {
+	WS_ETHTOOL_A_CABLE_TEST_EVENT_UNSPEC,
+	WS_ETHTOOL_A_CABLE_TEST_EVENT_DEV,
+	WS_ETHTOOL_A_CABLE_TEST_EVENT_RESULT,
+	WS_ETHTOOL_A_CABLE_TEST_EVENT_FAULT_LENGTH,
+	WS_ETHTOOL_A_CABLE_TEST_EVENT_LENGTH,
+};
+
+enum {
+	WS_ETHTOOL_A_NEWDEV_UNSPEC,
+	WS_ETHTOOL_A_NEWDEV_DEV,
+};
+
+enum ws_ethtool_act_cable_test_attrs {
+        WS_ETHTOOL_A_CABLE_TEST_UNSPEC,
+        WS_ETHTOOL_A_CABLE_TEST_DEV,
+};
+
+#define WS_GENL_ID_ETHTOOL 0x14
+#define GENL_ETHTOOL_NAME "ethtool"
+
+static const value_string genl_ethtool_cmds[] = {
+	{ WS_ETHNL_CMD_NOP,		"ETHNL_CMD_NOP" },
+	{ WS_ETHNL_CMD_EVENT,		"ETHNL_CMD_EVENT" },
+	{ WS_ETHNL_CMD_GET_STRSET,	"ETHNL_CMD_GET_STRSET" },
+	{ WS_ETHNL_CMD_SET_STRSET,	"ETHNL_CMD_SET_STRSET" },
+	{ WS_ETHNL_CMD_GET_INFO,	"ETHNL_CMD_GET_INFO" },
+	{ WS_ETHNL_CMD_SET_INFO,	"ETHNL_CMD_SET_INFO" },
+	{ WS_ETHNL_CMD_GET_SETTINGS,	"ETHNL_CMD_GET_SETTINGS" },
+	{ WS_ETHNL_CMD_SET_SETTINGS,	"ETHNL_CMD_SET_SETTINGS" },
+	{ WS_ETHNL_CMD_GET_PARAMS,	"ETHNL_CMD_GET_PARAMS" },
+	{ WS_ETHNL_CMD_SET_PARAMS,	"ETHNL_CMD_SET_PARAMS" },
+	{ WS_ETHNL_CMD_ACT_NWAY_RST,	"ETHNL_CMD_ACT_NWAY_RST" },
+	{ WS_ETHNL_CMD_ACT_PHYS_ID,	"ETHNL_CMD_ACT_PHYS_ID" },
+	{ WS_ETHNL_CMD_ACT_RESET,	"ETHNL_CMD_ACT_RESET" },
+	{ WS_ETHNL_CMD_GET_RXFLOW,	"ETHNL_CMD_GET_RXFLOW" },
+	{ WS_ETHNL_CMD_SET_RXFLOW,	"ETHNL_CMD_SET_RXFLOW" },
+	{ WS_ETHNL_CMD_ACT_CABLE_TEST,	"ETHNL_CMD_ACT_CABLE_TEST" },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cmd_events[] = {
+	{ WS_ETHTOOL_A_EVENT_UNSPEC,	"ETHTOOL_A_EVENT_UNSPEC", },
+	{ WS_ETHTOOL_A_EVENT_NEWDEV,	"ETHTOOL_A_EVENT_NEWDEV", },
+	{ WS_ETHTOOL_A_EVENT_DELDEV,	"ETHTOOL_A_EVENT_DELDEV", },
+	{ WS_ETHTOOL_A_EVENT_RENAMEDEV,	"ETHTOOL_A_EVENT_RENAMEDEV", },
+	{ WS_ETHTOOL_A_EVENT_CABLE_TEST,"ETHTOOL_A_EVENT_CABLE_TEST", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cable_test_pair[] = {
+	{ WS_ETHTOOL_A_CABLE_PAIR_0,	"PAIR 0", },
+	{ WS_ETHTOOL_A_CABLE_PAIR_1,	"PAIR 1", },
+	{ WS_ETHTOOL_A_CABLE_PAIR_2,	"PAIR 2", },
+	{ WS_ETHTOOL_A_CABLE_PAIR_3,	"PAIR_3", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cable_test_code[] = {
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE_UNSPEC,	"UNSPEC", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE_OK,		"OK", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE_OPEN,		"OPEN", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE_SAME_SHORT,	"SAME_SHORT", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE_CROSS_SHORT,	"CROSS_SHORT", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cable_test_fault_length[] = {
+	{ WS_ETHTOOL_A_CABLE_FAULT_LENGTH_UNSPEC,
+	  "ETHTOOL_A_CABLE_FAULT_LENGTH_UNSPEC", },
+	{ WS_ETHTOOL_A_CABLE_FAULT_LENGTH_PAIR,
+	  "ETHTOOL_A_CABLE_FAULT_LENGTH_PAIR", },
+	{ WS_ETHTOOL_A_CABLE_FAULT_LENGTH_CM,
+	  "ETHTOOL_A_CABLE_FAULT_LENGTH_CM", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cable_test_result[] = {
+	{ WS_ETHTOOL_A_CABLE_RESULT_UNSPEC,	"ETHTOOL_A_CABLE_RESULT_UNSPEC", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_PAIR,	"ETHTOOL_A_CABLE_RESULT_PAIR", },
+	{ WS_ETHTOOL_A_CABLE_RESULT_CODE,	"ETHTOOL_A_CABLE_RESULT_CODE", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cmd_events_cable_test[] = {
+	{ WS_ETHTOOL_A_CABLE_TEST_EVENT_UNSPEC,
+	  "ETHTOOL_A_CABLE_TEST_EVENT_UNSPEC", },
+	{ WS_ETHTOOL_A_CABLE_TEST_EVENT_DEV,
+	  "ETHTOOL_A_CABLE_TEST_EVENT_DEV", },
+	{ WS_ETHTOOL_A_CABLE_TEST_EVENT_RESULT,
+	  "ETHTOOL_A_CABLE_TEST_EVENT_RESULT", },
+	{ WS_ETHTOOL_A_CABLE_TEST_EVENT_FAULT_LENGTH,
+	  "ETHTOOL_A_CABLE_TEST_EVENT_FAULT_LENGTH", },
+	{ WS_ETHTOOL_A_CABLE_TEST_EVENT_LENGTH,
+	  "ETHTOOL_A_CABLE_TEST_EVENT_LENGTH", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_cmd_events_dev[] = {
+	{ WS_ETHTOOL_A_NEWDEV_UNSPEC,	"ETHTOOL_A_*DEV_UNSPEC", },
+	{ WS_ETHTOOL_A_NEWDEV_DEV,	"ETHTOOL_A_*DEV_DEV", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_dev_attrs[] = {
+
+	{ WS_ETHTOOL_A_DEV_INDEX,	"ETHTOOL_A_DEV_INDEX", },
+	{ WS_ETHTOOL_A_DEV_NAME,	"ETHTOOL_A_DEV_NAME", },
+	{ 0, NULL }
+};
+
+static const value_string genl_ethtool_act_cable_test_attrs[] = {
+	{ WS_ETHTOOL_A_CABLE_TEST_UNSPEC,	"ETHTOOL_A_CABLE_TEST_UNSPEC", },
+	{ WS_ETHTOOL_A_CABLE_TEST_DEV,		"ETHTOOL_A_CABLE_TEST_DEV", },
+};
+
+static header_field_info hfi_genl_ethtool_dev_attr NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.dev", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_dev_attrs), NLA_TYPE_MASK, NULL, HFILL };
+
+static header_field_info hfi_genl_ethtool_dev_index NETLINK_GENERIC_HFI_INIT =
+	{ "Device Index", "genl.ethtool_dev.index", FT_UINT32, BASE_DEC,
+	  NULL, 0x00, NULL, HFILL };
+
+static header_field_info hfi_genl_ethtool_dev_name NETLINK_GENERIC_HFI_INIT =
+	{ "Device Name", "genl.ethtool_dev.name", FT_STRINGZ, STR_ASCII,
+	  NULL, 0x00, NULL, HFILL };
+
+static int
+dissect_genl_ethtool_dev_attrs(tvbuff_t *tvb,
+			       void *data _U_, proto_tree *tree,
+			       int nla_type, int offset, int len)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_dev_attrs attr = (enum ws_ethtool_dev_attrs)type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+	proto_tree *ptree = proto_tree_get_parent_tree(tree);
+	const guint8 *name;
+	guint32 index;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_DEV_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_DEV_INDEX:
+		proto_tree_add_item_ret_uint(tree, &hfi_genl_ethtool_dev_index,
+					     tvb, offset, 4, info->encoding,
+					     &index);
+		proto_item_append_text(tree, ": %d", index);
+		proto_item_append_text(ptree, ", ifindex %d", index);
+		offset += 4;
+		break;
+	case WS_ETHTOOL_A_DEV_NAME:
+		proto_tree_add_item_ret_string(tree, &hfi_genl_ethtool_dev_name,
+					       tvb, offset, len, info->encoding,
+					       wmem_packet_scope(), &name);
+		proto_item_append_text(tree, ": %s", name);
+		proto_item_append_text(ptree, ", %s", name);
+		offset += len;
+		break;
+	};
+
+	return offset;
+}
+
+static int
+dissect_genl_ethtool_act_cable_test(tvbuff_t *tvb, void *data, proto_tree *tree,
+				    int nla_type, int offset, int len)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_act_cable_test_attrs attr =
+		(enum ws_ethtool_act_cable_test_attrs)type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_CABLE_TEST_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_CABLE_TEST_DEV:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_dev_attr,
+			ett_genl_ethtool_dev_attr,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_dev_attrs);
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cable_test_result NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.cmd_event.cable_test.result",
+	  FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cable_test_result), NLA_TYPE_MASK, NULL,
+	  HFILL };
+
+static header_field_info hfi_genl_ethtool_cable_test_result_pair NETLINK_GENERIC_HFI_INIT =
+	{ "Cable Pair", "genl.ethtool_dev.cmd_event.cable_test.result.pair",
+	  FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cable_test_pair), 0x00, NULL, HFILL };
+
+static header_field_info hfi_genl_ethtool_cable_test_result_code NETLINK_GENERIC_HFI_INIT =
+	{ "Code", "genl.ethtool_dev.cmd_event.cable_test.result.code",
+	  FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cable_test_code), 0x00, NULL, HFILL };
+
+static int
+dissect_genl_ethtool_cable_test_result(tvbuff_t *tvb, void *data,
+				       proto_tree *tree, int nla_type,
+				       int offset, int len _U_)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_cable_test_result attr =
+		(enum ws_ethtool_cable_test_result) type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+	proto_tree *ptree = proto_tree_get_parent_tree(tree);
+	const char *code_str;
+	guint32 pair;
+	guint32 code;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_CABLE_RESULT_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_CABLE_RESULT_PAIR:
+		proto_tree_add_item_ret_uint(
+			tree, &hfi_genl_ethtool_cable_test_result_pair,
+			tvb, offset, 1, info->encoding, &pair);
+		proto_item_append_text(tree, ": %d", pair);
+		proto_item_append_text(ptree, ", pair %d", pair);
+		offset += 1;
+		break;
+	case WS_ETHTOOL_A_CABLE_RESULT_CODE:
+		proto_tree_add_item_ret_uint(
+			tree, &hfi_genl_ethtool_cable_test_result_code,
+			tvb, offset, 1, info->encoding, &code);
+		code_str = try_val_to_str(code, genl_ethtool_cable_test_code);
+		proto_item_append_text(tree, ": %s", code_str);
+		proto_item_append_text(ptree, ", code %s", code_str);
+		offset += 1;
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cable_test_fault_length NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.cmd_event.cable_test.fault_length",
+	  FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cable_test_fault_length), NLA_TYPE_MASK, NULL,
+	  HFILL };
+
+static header_field_info hfi_genl_ethtool_cable_test_fault_length_pair NETLINK_GENERIC_HFI_INIT =
+	{ "Cable Pair", "genl.ethtool_dev.cmd_event.cable_test.fault_length.pair",
+	  FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cable_test_pair), 0x00, NULL, HFILL };
+
+static header_field_info hfi_genl_ethtool_cable_test_fault_length_cm NETLINK_GENERIC_HFI_INIT =
+	{ "Length", "genl.ethtool_dev.cmd_event.cable_test.fault_length.cm",
+	  FT_UINT16, BASE_DEC,
+	  NULL, 0x00, NULL, HFILL };
+
+static int
+dissect_genl_ethtool_cable_test_fault_length(tvbuff_t *tvb, void *data,
+					     proto_tree *tree, int nla_type,
+					     int offset, int len _U_)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_cable_test_fault_length attr =
+		(enum ws_ethtool_cable_test_fault_length) type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+	proto_tree *ptree = proto_tree_get_parent_tree(tree);
+	guint32 pair;
+	guint32 length;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_CABLE_FAULT_LENGTH_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_CABLE_FAULT_LENGTH_PAIR:
+		proto_tree_add_item_ret_uint(
+			tree, &hfi_genl_ethtool_cable_test_fault_length_pair,
+			tvb, offset, 1, info->encoding, &pair);
+		proto_item_append_text(tree, ": %d", pair);
+		proto_item_append_text(ptree, ", pair %d", pair);
+		offset += 1;
+		break;
+	case WS_ETHTOOL_A_CABLE_FAULT_LENGTH_CM:
+		proto_tree_add_item_ret_uint(
+			tree, &hfi_genl_ethtool_cable_test_fault_length_cm,
+			tvb, offset, 2, info->encoding, &length);
+		proto_item_append_text(tree, ": %d cm", length);
+		proto_item_append_text(ptree, ", length %d cm", length);
+		offset += 1;
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cmd_event_cable_test NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.cmd_event.cable_test", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cmd_events_cable_test), NLA_TYPE_MASK, NULL,
+	  HFILL };
+
+static int
+dissect_genl_ethtool_cmd_event_cable_test(tvbuff_t *tvb,
+					  void *data, proto_tree *tree,
+					  int nla_type, int offset, int len)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_cmd_events_cable_test attr =
+		(enum ws_ethtool_cmd_events_cable_test)type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_CABLE_TEST_EVENT_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_CABLE_TEST_EVENT_DEV:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_dev_attr,
+			ett_genl_ethtool_dev_attr,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_dev_attrs);
+		break;
+	case WS_ETHTOOL_A_CABLE_TEST_EVENT_RESULT:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_cable_test_result,
+			ett_genl_ethtool_cable_test_result,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_cable_test_result);
+		break;
+	case WS_ETHTOOL_A_CABLE_TEST_EVENT_FAULT_LENGTH:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_cable_test_fault_length,
+			ett_genl_ethtool_cable_test_fault_length,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_cable_test_fault_length);
+		break;
+	default:
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cmd_event_dev_attr NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.cmd_event.dev", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cmd_events_dev), NLA_TYPE_MASK, NULL, HFILL };
+
+/* NEWDEV, DELDEV, and RENAMEDEV all use the same format */
+static int
+dissect_genl_ethtool_cmd_event_dev_attrs(tvbuff_t *tvb,
+					 void *data, proto_tree *tree,
+					 int nla_type, int offset, int len)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_act_cable_test_attrs attr =
+		(enum ws_ethtool_act_cable_test_attrs)type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_NEWDEV_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_NEWDEV_DEV:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_dev_attr,
+			ett_genl_ethtool_dev_attr,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_dev_attrs);
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cmd_event NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.cmd_event", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cmd_events), NLA_TYPE_MASK, NULL, HFILL };
+
+static int
+dissect_genl_ethtool_cmd_event(tvbuff_t *tvb,
+			       void *data , proto_tree *tree,
+			       int nla_type, int offset, int len)
+{
+	int type = nla_type & NLA_TYPE_MASK;
+	enum ws_ethtool_cmd_events attr = (enum ws_ethtool_cmd_events) type;
+	genl_ethtool_info_t *info = (genl_ethtool_info_t *) data;
+
+	switch (attr) {
+	case WS_ETHTOOL_A_EVENT_UNSPEC:
+		break;
+	case WS_ETHTOOL_A_EVENT_NEWDEV:
+	case WS_ETHTOOL_A_EVENT_DELDEV:
+	case WS_ETHTOOL_A_EVENT_RENAMEDEV:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_cmd_event_dev_attr,
+			ett_genl_ethtool_cmd_event_dev_attr,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_cmd_event_dev_attrs);
+		break;
+	case WS_ETHTOOL_A_EVENT_CABLE_TEST:
+		offset += dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_cmd_event_cable_test,
+			ett_genl_ethtool_cmd_event_cable_test,
+			info, info->data, tree, offset, len,
+			dissect_genl_ethtool_cmd_event_cable_test);
+		break;
+	}
+
+	return offset;
+}
+
+static header_field_info hfi_genl_ethtool_cmd NETLINK_GENERIC_HFI_INIT =
+	{ "Command", "genl.ethtool.cmd", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_cmds), 0x00, "Generic Netlink command", HFILL };
+
+static header_field_info hfi_genl_ethtool_act_cable_test NETLINK_GENERIC_HFI_INIT =
+	{ "Type", "genl.ethtool.act_cable_test", FT_UINT8, BASE_DEC,
+	  VALS(genl_ethtool_act_cable_test_attrs), NLA_TYPE_MASK, NULL, HFILL };
+
+static int
+dissect_genl_ethtool(tvbuff_t *tvb, packet_info *pinfo _U_,
+		     proto_tree *tree _U_, void *data)
+{
+	genl_info_t *genl_info = (genl_info_t *) data;
+	genl_ethtool_info_t info;
+	guint8 cmd;
+	int offset;
+
+	if (!genl_info) {
+		return 0;
+	}
+
+	info.data = genl_info->data;
+	info.encoding = genl_info->encoding;
+
+	offset = dissect_genl_header(tvb, genl_info, &hfi_genl_ethtool_cmd);
+
+	cmd = tvb_get_guint8(tvb, 0);
+
+	switch (cmd) {
+	case WS_ETHNL_CMD_EVENT:
+		dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_cmd_event,
+			ett_genl_ethtool_cmd_event,
+			&info, info.data,
+			genl_info->genl_tree, offset, -1,
+			dissect_genl_ethtool_cmd_event);
+		break;
+	case WS_ETHNL_CMD_ACT_CABLE_TEST:
+		dissect_netlink_attributes(
+			tvb, &hfi_genl_ethtool_act_cable_test,
+			ett_genl_ethtool_act_cable_test,
+			&info, info.data,
+			genl_info->genl_tree, offset, -1,
+			dissect_genl_ethtool_act_cable_test);
+		break;
+	}
+
+	return tvb_captured_length(tvb);
+}
+
 
 static header_field_info hfi_genl_family_id NETLINK_GENERIC_HFI_INIT =
 	{ "Family ID", "genl.family_id", FT_UINT8, BASE_HEX,
@@ -472,6 +1006,9 @@ genl_init(void)
 {
 	/* Add fixed family entry (0x10 maps to "nlctrl"). */
 	wmem_map_insert(genl_family_map, GUINT_TO_POINTER(WS_GENL_ID_CTRL), GENL_CTRL_NAME);
+	/* Add fixed family entry (0x14 maps to "ethtool"). */
+	wmem_map_insert(genl_family_map, GUINT_TO_POINTER(WS_GENL_ID_ETHTOOL),
+			GENL_ETHTOOL_NAME);
 }
 
 void
@@ -502,6 +1039,20 @@ proto_register_netlink_generic(void)
 		&hfi_genl_ctrl_op_flags_uns_admin_perm,
 		&hfi_genl_ctrl_group_name,
 		&hfi_genl_ctrl_group_id,
+		&hfi_genl_ethtool_cmd,
+		&hfi_genl_ethtool_act_cable_test,
+		&hfi_genl_ethtool_dev_attr,
+		&hfi_genl_ethtool_dev_index,
+		&hfi_genl_ethtool_dev_name,
+		&hfi_genl_ethtool_cmd_event_dev_attr,
+		&hfi_genl_ethtool_cmd_event_cable_test,
+		&hfi_genl_ethtool_cable_test_result,
+		&hfi_genl_ethtool_cable_test_result_pair,
+		&hfi_genl_ethtool_cable_test_result_code,
+		&hfi_genl_ethtool_cable_test_fault_length,
+		&hfi_genl_ethtool_cable_test_fault_length_pair,
+		&hfi_genl_ethtool_cable_test_fault_length_cm,
+		&hfi_genl_ethtool_cmd_event,
 	};
 #endif
 
@@ -514,6 +1065,13 @@ proto_register_netlink_generic(void)
 		&ett_genl_ctrl_groups,
 		&ett_genl_ctrl_groups_attr,
 		&ett_genl_nested_attr,
+		&ett_genl_ethtool_act_cable_test,
+		&ett_genl_ethtool_cmd_event,
+		&ett_genl_ethtool_cmd_event_dev_attr,
+		&ett_genl_ethtool_cmd_event_cable_test,
+		&ett_genl_ethtool_dev_attr,
+		&ett_genl_ethtool_cable_test_result,
+		&ett_genl_ethtool_cable_test_fault_length,
 	};
 
 	proto_netlink_generic = proto_register_protocol("Linux Generic Netlink protocol", "genl", "genl");
@@ -524,6 +1082,7 @@ proto_register_netlink_generic(void)
 
 	netlink_generic = create_dissector_handle(dissect_netlink_generic, proto_netlink_generic);
 	netlink_generic_ctrl = create_dissector_handle(dissect_genl_ctrl, proto_netlink_generic);
+	netlink_generic_ethtool = create_dissector_handle(dissect_genl_ethtool, proto_netlink_generic);
 	genl_dissector_table = register_dissector_table(
 		"genl.family",
 		"Linux Generic Netlink family name",
@@ -540,6 +1099,7 @@ void
 proto_reg_handoff_netlink_generic(void)
 {
 	dissector_add_string("genl.family", GENL_CTRL_NAME, netlink_generic_ctrl);
+	dissector_add_string("genl.family", GENL_ETHTOOL_NAME, netlink_generic_ethtool);
 	dissector_add_uint("netlink.protocol", WS_NETLINK_GENERIC, netlink_generic);
 }
 
